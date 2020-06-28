@@ -1,0 +1,413 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ECSAMI:
+    Description: 'AMI ID'
+    Type: String
+    Default: 'ami-0471ea40c46b4325d'
+    # ECS-optimized AMI in ap-northeast-1
+    # Refer to https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-optimized_AMI.html
+
+Resources:
+  #####################
+  # Network resources #
+  #####################
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '192.168.0.0/16'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: 'default'
+      Tags:
+        -
+          Key: 'VPC-Name'
+          Value: 'VPC-for-EC2-AutoScaling'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        -
+          Key: 'IGW-Name'
+          Value: 'IGW-for-EC2-AutoScaling'
+
+  IGWAttacher:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+    DependsOn:
+      - VPC
+      - InternetGateway
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '192.168.0.0/20'
+      AvailabilityZone: 'ap-northeast-1a'
+      Tags:
+        -
+          Key: 'Subnet-Name'
+          Value: 'SubnetA-for-EC2-AutoScaling'
+    DependsOn:
+      - VPC
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '192.168.16.0/20'
+      AvailabilityZone: 'ap-northeast-1c'
+      Tags:
+        -
+          Key: 'Subnet-Name'
+          Value: 'SubnetB-for-EC2-AutoScaling'
+    DependsOn:
+      - VPC
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        -
+          Key: 'RouteTable-Name'
+          Value: 'RouteTable-for-EC2-AutoScaling'
+    DependsOn:
+      - VPC
+
+  SubnetAttacherA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref SubnetA
+    DependsOn:
+      - RouteTable
+      - SubnetA
+
+  SubnetAttacherB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref SubnetB
+    DependsOn:
+      - RouteTable
+      - SubnetB
+
+  RouteAttacher:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+    DependsOn:
+      - RouteTable
+      - InternetGateway
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'SampleSecurityGroup'
+      GroupName: 'sampleSecurityGroup'
+      SecurityGroupEgress:
+        -
+          IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: '0.0.0.0/0'
+        -
+          IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: '::/0'
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        -
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIpv6: '::/0'
+        -
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '0.0.0.0/0'
+        -
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: '::/0'
+      VpcId: !Ref VPC
+      Tags:
+        -
+          Key: 'SecurityGroup-Name'
+          Value: 'SecurityGroup-for-EC2-AutoScaling'
+    DependsOn:
+      - VPC
+
+
+  ###########################
+  # LoadBalancing resources #
+  ###########################
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: 'SampleTargetGroup'
+      Port: 80
+      Protocol: 'HTTP'
+      VpcId: !Ref VPC
+      HealthCheckPath: '/'
+      Tags:
+        -
+          Key: 'TargetGroup-Name'
+          Value: 'TargetGroup-for-EC2-AutoScaling'
+    DependsOn:
+      - VPC
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: 'HTTP'
+      DefaultActions:
+        - Type: 'forward'
+          TargetGroupArn: !Ref ALBTargetGroup
+    DependsOn:
+      - ApplicationLoadBalancer
+      - ALBTargetGroup
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: 'SampleLoadBalancer'
+      IpAddressType: 'ipv4'
+      SubnetMappings:
+        - SubnetId: !Ref SubnetA
+        - SubnetId: !Ref SubnetB
+      SecurityGroups:
+        - !Ref SecurityGroup
+      Tags:
+        - Key: 'ALB-Name'
+          Value: 'ALB-for-EC2-AutoScaling'
+      Type: 'application'
+    DependsOn:
+      - SecurityGroup
+      - SubnetA
+      - SubnetB
+
+
+  #########################
+  # AutoScaling resources #
+  #########################
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: 'SapmleAutoScaling'
+      AvailabilityZones:
+        - 'ap-northeast-1a'
+        - 'ap-northeast-1c'
+      DesiredCapacity: '2'
+      LaunchConfigurationName: 'SampleLaunchConfiguration'
+      MaxSize: '4'
+      MetricsCollection:
+        - Granularity: '1Minute'
+          Metrics:
+            - 'GroupMinSize'
+            - 'GroupMaxSize'
+            - 'GroupDesiredCapacity'
+            - 'GroupInServiceInstances'
+            - 'GroupPendingInstances'
+            - 'GroupStandbyInstances'
+            - 'GroupTerminatingInstances'
+            - 'GroupTotalInstances'
+      MinSize: '1'
+      Tags:
+        - Key: 'AutoScalingGroup-Name'
+          Value: 'SampleAutoScaling'
+          PropagateAtLaunch: 'false'
+      VPCZoneIdentifier:
+        - !Ref SubnetA
+        - !Ref SubnetB
+    DependsOn:
+      - LaunchConfiguration
+      - SubnetA
+      - SubnetB
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !Ref ECSAMI
+      InstanceType: 't2.micro'
+      KeyName: 'SampleLaunchConfiguration'
+      LaunchConfigurationName: 'SampleLaunchConfiguration'
+      SecurityGroups:
+        - !Ref SecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          sudo echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+          sudo yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ECSAutoScalingGroup --region ${AWS::Region}
+    DependsOn:
+      - InstanceProfile
+      - SecurityGroup
+      - ECSCluster
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceProfileRole
+    DependsOn:
+      - InstanceProfileRole
+
+  InstanceProfileRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service: 'ec2.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: 'ecs-service'
+          PolicyDocument:
+            Statement:
+            - Effect: 'Allow'
+              Action:
+                - 'ec2:DescribeTags'
+                - 'ecs:CreateCluster'
+                - 'ecs:DeregisterContainerInstance'
+                - 'ecs:DiscoverPollEndpoint'
+                - 'ecs:Poll'
+                - 'ecs:RegisterContainerInstance'
+                - 'ecs:StartTelemetrySession'
+                - 'ecs:Submit*'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchGetImage'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecs:UpdateContainerInstancesState'
+                - 'ecr:BatchCheckLayerAvailability'
+              Resource: '*'
+        - PolicyName: 'ecs-s3-access'
+          PolicyDocument:
+            Statement:
+            - Effect: 'Allow'
+              Action:
+                - 's3:*'
+              Resource: '*'
+
+
+  #################
+  # ECS resources #
+  #################
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: 'SampleECSCluster'
+      Tags:
+        - Key: 'ECSCluster-Name'
+          Value: 'ECSCluster-for-EC2-AutoScaling'
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !GetAtt ECSCluster.Arn
+      DesiredCount: 2
+      LoadBalancers:
+        - ContainerName: 'nginx'
+          ContainerPort: 80
+          TargetGroupArn: !Ref ALBTargetGroup
+      PlacementStrategies:
+        - Field: 'instanceId'
+          Type: 'spread'
+        - Field: 'attribute:ecs.availability-zone'
+          Type: 'spread'
+      SchedulingStrategy: 'REPLICA'
+      ServiceName: 'SampleECSService'
+      Tags:
+        - Key: 'ECSService-Name'
+          Value: 'ECSService-for-EC2-AutoScaling'
+      TaskDefinition: !Ref ECSTaskDefinition
+    DependsOn:
+      - AutoScalingGroup
+      - ECSCluster
+      - ECSTaskDefinition
+      - ALBListener
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Essential: true
+          Image: '${AWS::AccountId}.dkr.ecr.ap-northeast-1.amazonaws.com/${WebService}:latest'
+          Name: 'container-name-for-web-service'
+          Links:
+            - 'postgresql'
+          MountPoints:
+            - ContainerPath: '/var/tmp'
+              SourceVolume: 'unicorn-socket'
+            - ContainerPath: '/app/log'
+              SourceVolume: 'application-logs'
+            - ContainerPath: '/app/tmp/db'
+              SourceVolume: 'postgres-data'
+          DependsOn:
+            - Condition: 'START'
+              ContainerName: 'nginx'
+        - Essential: true
+          Image: '${AWS::AccountId}.dkr.ecr.ap-northeast-1.amazonaws.com/${WebServer}:latest'
+          Name: 'container-name-for-web-server'
+          MountPoints:
+            - ContainerPath: '/var/tmp'
+              SourceVolume: 'unicorn-socket'
+            - ContainerPath: '/var/log/nginx'
+              SourceVolume: 'nginx-logs'
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 80
+              Protocol: 'tcp'
+        - Essential: true
+          Image: 'postgres:latest'
+          Name: 'postgresql'
+          Environment:
+            - Name: 'POSTGRES_PASSWORD'
+              Value: 'postgres'
+          MountPoints:
+            - ContainerPath: '/var/lib/postgresql/data'
+              SourceVolume: 'postgres-data'
+          PortMappings:
+            - ContainerPort: 5432
+              HostPort: 5432
+              Protocol: 'tcp'
+      Family: 'SampleTaskDefinition'
+      Memory: '512'
+      Volumes:
+        - Name: 'postgres-data'
+          Host:
+            SourcePath: /var/tmp/db/postgres/data
+        - Name: 'unicorn-socket'
+          Host:
+            SourcePath: /var/tmp/unicorn/socket
+        - Name: 'application-logs'
+          Host:
+            SourcePath: /var/tmp/logs/application
+        - Name: 'nginx-logs'
+          Host:
+            SourcePath: /var/tmp/logs/nginx
+      Tags:
+        - Key: 'ECSTaskDefinition-Name'
+          Value: 'ECSTaskDefinition-for-EC2-AutoScaling'

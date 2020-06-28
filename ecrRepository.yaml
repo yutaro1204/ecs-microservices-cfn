@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  WebServiceRepositoryName:
+    Default: 'ecr_repository_name_for_web_service'
+    Type: String
+  WebServerRepositoryName:
+    Default: 'ecr_repository_name_for_web_server'
+    Type: String
+
+Resources:
+  WebServiceContainerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref WebServiceRepositoryName
+
+  WebServerContainerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref WebServerRepositoryName
+
+Outputs:
+  WebServiceECRRepositoryArn:
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${WebServiceContainerRepository}'
+  WebServerECRRepositoryArn:
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${WebServerContainerRepository}'
