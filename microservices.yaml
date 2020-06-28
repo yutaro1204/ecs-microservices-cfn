@@ -329,7 +329,7 @@ Resources:
       Cluster: !GetAtt ECSCluster.Arn
       DesiredCount: 2
       LoadBalancers:
-        - ContainerName: 'nginx'
+        - ContainerName: 'container-name-for-web-server'
           ContainerPort: 80
           TargetGroupArn: !Ref ALBTargetGroup
       PlacementStrategies:
@@ -354,6 +354,7 @@ Resources:
     Properties:
       ContainerDefinitions:
         - Essential: true
+          # web service image
           Image: '${AWS::AccountId}.dkr.ecr.ap-northeast-1.amazonaws.com/${WebService}:latest'
           Name: 'container-name-for-web-service'
           Links:
@@ -361,14 +362,17 @@ Resources:
           MountPoints:
             - ContainerPath: '/var/tmp'
               SourceVolume: 'unicorn-socket'
+            # app is the directory of rails
             - ContainerPath: '/app/log'
               SourceVolume: 'application-logs'
+            # app is the directory of rails
             - ContainerPath: '/app/tmp/db'
               SourceVolume: 'postgres-data'
           DependsOn:
             - Condition: 'START'
-              ContainerName: 'nginx'
+              ContainerName: 'container-name-for-web-server'
         - Essential: true
+          # web server image
           Image: '${AWS::AccountId}.dkr.ecr.ap-northeast-1.amazonaws.com/${WebServer}:latest'
           Name: 'container-name-for-web-server'
           MountPoints:
